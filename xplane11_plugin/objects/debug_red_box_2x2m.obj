@@ -1,0 +1,31 @@
+I
+800
+OBJ
+
+# X-Plane 11 OBJ8 — 2x2x2 Meter Red Debug Cube (Centered at Origin: -1.0m to +1.0m)
+# Ready to use directly in X-Plane 11 via XPLMInstance (no manual Blender export required)
+TEXTURE red_box_tex.png
+POINT_COUNTS 8 0 0 36
+
+VT -1.0000 -1.0000  1.0000  0.0  0.0  1.0  0.0 0.0
+VT  1.0000 -1.0000  1.0000  0.0  0.0  1.0  1.0 0.0
+VT  1.0000  1.0000  1.0000  0.0  0.0  1.0  1.0 1.0
+VT -1.0000  1.0000  1.0000  0.0  0.0  1.0  0.0 1.0
+VT -1.0000 -1.0000 -1.0000  0.0  0.0 -1.0  0.0 0.0
+VT  1.0000 -1.0000 -1.0000  0.0  0.0 -1.0  1.0 0.0
+VT  1.0000  1.0000 -1.0000  0.0  0.0 -1.0  1.0 1.0
+VT -1.0000  1.0000 -1.0000  0.0  0.0 -1.0  0.0 1.0
+
+IDX10 0 1 2 0 2 3 1 5 6 1
+IDX10 6 2 5 4 7 5 7 6 4 0
+IDX10 3 4 3 7 3 2 6 3 6 7
+IDX 4
+IDX 5
+IDX 1
+IDX 4
+IDX 1
+IDX 0
+
+ATTR_emission_rgb 1.0 0.15 0.15
+ATTR_no_cull
+TRIS 0 36
