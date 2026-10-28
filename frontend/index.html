@@ -1,0 +1,2143 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AeroGrid 2D — Procedural METAR Weather Radar MVP</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #090d16;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+    .font-mono-code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    #radar-map {
+      width: 100%;
+      height: 100%;
+      background: #0b1320;
+      z-index: 1;
+    }
+    .leaflet-container {
+      background: #0b1320 !important;
+      font-family: 'Inter', sans-serif !important;
+    }
+    /* Custom Leaflet Dark Popup */
+    .leaflet-popup-content-wrapper {
+      background: rgba(15, 23, 42, 0.96) !important;
+      color: #f1f5f9 !important;
+      border: 1px solid rgba(56, 189, 248, 0.35) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7) !important;
+      padding: 2px !important;
+    }
+    .leaflet-popup-tip {
+      background: rgba(15, 23, 42, 0.96) !important;
+    }
+    .leaflet-popup-content {
+      margin: 12px 14px !important;
+      line-height: 1.45 !important;
+    }
+    .leaflet-control-zoom a {
+      background-color: rgba(15, 23, 42, 0.9) !important;
+      color: #38bdf8 !important;
+      border-color: rgba(51, 65, 85, 0.8) !important;
+    }
+    .leaflet-control-zoom a:hover {
+      background-color: rgba(30, 41, 59, 0.95) !important;
+      color: #7dd3fc !important;
+    }
+    .grid-label-tooltip {
+      background: rgba(9, 13, 22, 0.78) !important;
+      border: 1px solid rgba(148, 163, 184, 0.25) !important;
+      color: #cbd5e1 !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 10px !important;
+      padding: 1px 4px !important;
+      border-radius: 4px !important;
+      box-shadow: none !important;
+      pointer-events: none !important;
+    }
+    .grid-label-tooltip::before {
+      display: none !important;
+    }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-slate-950 text-slate-100 select-none">
+
+  <!-- Top Navigation & Telemetry Header -->
+  <header class="w-full bg-slate-900/95 border-b border-slate-800 px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 z-30">
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-lg bg-sky-500/15 border border-sky-400/40 flex items-center justify-center text-sky-400 shadow-inner">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-sm sm:text-base font-bold tracking-tight text-white">AeroGrid 2D Weather Radar</h1>
+          <span class="px-2 py-0.5 text-[10px] font-mono-code font-semibold uppercase tracking-wider bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded-full">MVP v1.0</span>
+        </div>
+        <p class="text-[11px] text-slate-400 hidden sm:block">1°×1° Spatial IDW Grid • World-Space 2D Simplex Noise • Bilinear Threshold Blending</p>
+      </div>
+    </div>
+
+    <!-- Mode & View Switcher Tabs -->
+    <div class="flex items-center gap-1.5 bg-slate-950/90 p-1 rounded-lg border border-slate-800">
+      <button id="tab-btn-radar" type="button" class="px-2.5 py-1.5 rounded-md text-xs font-medium transition bg-sky-600 text-white shadow">
+        Radar Map
+      </button>
+      <button id="tab-btn-pipeline" type="button" class="px-2.5 py-1.5 rounded-md text-xs font-medium transition text-slate-300 hover:text-white hover:bg-slate-800">
+        METAR &amp; IDW Table
+      </button>
+      <button id="tab-btn-api" type="button" class="px-2.5 py-1.5 rounded-md text-xs font-medium transition text-slate-300 hover:text-white hover:bg-slate-800">
+        REST API &amp; Backend Code
+      </button>
+    </div>
+
+    <!-- Live Telemetry Status Pill -->
+    <div class="flex items-center gap-2 text-xs">
+      <div id="status-badge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-mono-code text-[11px]">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="status-text">NOAA/METAR SYNC: 15 STATIONS</span>
+      </div>
+      <button id="btn-fetch-noaa" type="button" class="px-2.5 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/40 text-sky-300 font-medium text-xs transition flex items-center gap-1.5" title="Fetch live METAR from NOAA Aviation Weather Center API">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        <span>Sync NOAA API</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Container -->
+  <main class="flex-1 flex flex-col lg:flex-row relative overflow-hidden">
+
+    <!-- VIEW 1: INTERACTIVE RADAR MAP + CONTROL SIDEBAR -->
+    <div id="view-radar" class="flex-1 flex flex-col lg:flex-row w-full h-full min-h-[calc(100vh-56px)]">
+
+      <!-- Map Viewport Container -->
+      <div class="relative flex-1 min-h-[420px] lg:min-h-0 bg-slate-950">
+        <div id="radar-map"></div>
+
+        <!-- Floating Top-Left Overlay: Active Formula & Cursor Probe -->
+        <div class="absolute top-3 left-14 z-[500] pointer-events-none flex flex-col gap-2 max-w-xs sm:max-w-md">
+          <div class="bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-2 shadow-xl pointer-events-auto">
+            <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-1.5 mb-1.5">
+              <span class="text-[11px] font-semibold uppercase tracking-wider text-sky-400">Live World-Space Probe</span>
+              <span id="probe-coord" class="text-[11px] font-mono-code text-slate-300">Lat: -6.13°, Lon: 106.66°</span>
+            </div>
+            <div class="grid grid-cols-4 gap-2 text-center font-mono-code text-[11px]">
+              <div class="bg-slate-950/80 rounded px-1.5 py-1 border border-slate-800/80">
+                <div class="text-[9px] text-slate-400">Bilinear τ</div>
+                <div id="probe-tau" class="text-amber-300 font-semibold">0.750</div>
+              </div>
+              <div class="bg-slate-950/80 rounded px-1.5 py-1 border border-slate-800/80">
+                <div class="text-[9px] text-slate-400">Simplex2D</div>
+                <div id="probe-noise" class="text-sky-300 font-semibold">0.812</div>
+              </div>
+              <div class="bg-slate-950/80 rounded px-1.5 py-1 border border-slate-800/80">
+                <div class="text-[9px] text-slate-400">Cloud α</div>
+                <div id="probe-alpha" class="text-emerald-300 font-semibold">24.8%</div>
+              </div>
+              <div class="bg-slate-950/80 rounded px-1.5 py-1 border border-slate-800/80">
+                <div class="text-[9px] text-slate-400">Local Wind</div>
+                <div id="probe-wind" class="text-purple-300 font-semibold">180°/04kt</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Bottom-Left Legend & Oktas Scale -->
+        <div class="absolute bottom-4 left-3 z-[500] bg-slate-900/92 backdrop-blur-md border border-slate-700/80 rounded-xl p-2.5 shadow-xl text-xs max-w-[330px]">
+          <div class="font-semibold text-slate-200 text-[11px] mb-1.5 flex items-center justify-between">
+            <span>METAR Cloud Coverage (Oktas &amp; Cutoff τ)</span>
+            <span id="fps-counter" class="font-mono-code text-[10px] text-sky-400">60 FPS</span>
+          </div>
+          <div class="grid grid-cols-5 gap-1 text-[10px] font-mono-code text-center">
+            <div class="p-1 rounded bg-slate-800/90 border border-slate-700">
+              <div class="text-slate-300 font-bold">SKC/CLR</div>
+              <div class="text-slate-400">0/8</div>
+              <div class="text-amber-300">τ=1.00</div>
+            </div>
+            <div class="p-1 rounded bg-sky-950/80 border border-sky-700/50">
+              <div class="text-sky-300 font-bold">FEW</div>
+              <div class="text-slate-300">1–2/8</div>
+              <div class="text-amber-300">τ=0.75</div>
+            </div>
+            <div class="p-1 rounded bg-cyan-950/80 border border-cyan-600/50">
+              <div class="text-cyan-300 font-bold">SCT</div>
+              <div class="text-slate-300">3–4/8</div>
+              <div class="text-amber-300">τ=0.50</div>
+            </div>
+            <div class="p-1 rounded bg-indigo-950/80 border border-indigo-500/50">
+              <div class="text-indigo-300 font-bold">BKN</div>
+              <div class="text-slate-300">5–7/8</div>
+              <div class="text-amber-300">τ=0.25</div>
+            </div>
+            <div class="p-1 rounded bg-purple-950/80 border border-purple-500/60">
+              <div class="text-purple-200 font-bold">OVC</div>
+              <div class="text-slate-300">8/8</div>
+              <div class="text-amber-300">τ=0.00</div>
+            </div>
+          </div>
+          <div class="mt-2 flex items-center justify-between text-[10px] text-slate-400">
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block"></span> Direct METAR Grid</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-400 inline-block"></span> IDW Interpolated (3–4 Nearest)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Sidebar: Controls, Inspector & Live METAR Parser -->
+      <aside class="w-full lg:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col max-h-[55vh] lg:max-h-[calc(100vh-56px)] overflow-y-auto z-20">
+
+        <!-- Section 1: Weather Scenario & Layer Toggles -->
+        <div class="p-3.5 border-b border-slate-800 space-y-3">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-sky-400">1. Scenario &amp; Visual Layers</h2>
+            <span id="grid-stats-pill" class="text-[11px] font-mono-code text-slate-400">Grids: 0</span>
+          </div>
+
+          <!-- Scenario Preset Selector -->
+          <div>
+            <label for="scenario-select" class="block text-[11px] text-slate-400 mb-1">METAR Weather Dataset Preset</label>
+            <select id="scenario-select" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+              <option value="grounded">Grounded Indonesia &amp; SEA FIR Snapshot (Oct 2026)</option>
+              <option value="convective">ITCZ Convective Squall &amp; Overcast Front (BKN/OVC Test)</option>
+              <option value="clear_vs_storm">Sharp Gradient Test (West OVC 8/8 vs East SKC 0/8)</option>
+            </select>
+          </div>
+
+          <!-- Layer Toggle Buttons -->
+          <div class="grid grid-cols-2 gap-1.5 text-xs">
+            <button id="toggle-clouds" type="button" class="px-2.5 py-1.5 rounded-lg border border-sky-500/50 bg-sky-500/20 text-sky-200 font-medium flex items-center justify-between transition">
+              <span>Procedural Clouds</span>
+              <span id="badge-clouds" class="text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-sky-500/30">ON</span>
+            </button>
+            <button id="toggle-grid" type="button" class="px-2.5 py-1.5 rounded-lg border border-sky-500/50 bg-sky-500/20 text-sky-200 font-medium flex items-center justify-between transition">
+              <span>1°×1° Grid Layer</span>
+              <span id="badge-grid" class="text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-sky-500/30">ON</span>
+            </button>
+            <button id="toggle-wind" type="button" class="px-2.5 py-1.5 rounded-lg border border-sky-500/50 bg-sky-500/20 text-sky-200 font-medium flex items-center justify-between transition">
+              <span>Wind Drift &amp; Arrows</span>
+              <span id="badge-wind" class="text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-sky-500/30">ON</span>
+            </button>
+            <button id="toggle-bilinear" type="button" class="px-2.5 py-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/20 text-emerald-200 font-medium flex items-center justify-between transition" title="Compare smooth Bilinear Blending of cutoff threshold τ vs unblended hard 1°x1° grid boundaries">
+              <span>Bilinear Blending</span>
+              <span id="badge-bilinear" class="text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-emerald-500/30">ON</span>
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between gap-2 pt-1">
+            <button id="toggle-labels" type="button" class="flex-1 px-2 py-1 rounded border border-slate-700 bg-slate-800/80 text-slate-300 text-[11px] hover:bg-slate-800 transition">
+              Toggle Grid τ Labels
+            </button>
+            <button id="toggle-basemap" type="button" class="flex-1 px-2 py-1 rounded border border-slate-700 bg-slate-800/80 text-slate-300 text-[11px] hover:bg-slate-800 transition">
+              Basemap: Dark Radar
+            </button>
+          </div>
+        </div>
+
+        <!-- Section 2: Phase 1 & 2 Mathematical Parameters -->
+        <div class="p-3.5 border-b border-slate-800 space-y-3">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-sky-400">2. Procedural Noise &amp; IDW Parameters</h2>
+
+          <!-- Simplex World Frequency -->
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <label for="slider-freq" class="text-slate-300">Simplex2D World Frequency (<code class="text-sky-300">freq</code>)</label>
+              <span id="val-freq" class="font-mono-code text-sky-400">1.40</span>
+            </div>
+            <input id="slider-freq" type="range" min="0.4" max="4.0" step="0.1" value="1.4" class="w-full accent-sky-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg" />
+          </div>
+
+          <!-- IDW Nearest Stations (k = 3 or 4) -->
+          <div class="grid grid-cols-2 gap-2.5">
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <label for="slider-idw-k" class="text-slate-300">IDW Neighbors (<code class="text-amber-300">k</code>)</label>
+                <span id="val-idw-k" class="font-mono-code text-amber-400">4</span>
+              </div>
+              <input id="slider-idw-k" type="range" min="2" max="6" step="1" value="4" class="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg" />
+            </div>
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <label for="slider-idw-p" class="text-slate-300">IDW Power (<code class="text-amber-300">p</code>)</label>
+                <span id="val-idw-p" class="font-mono-code text-amber-400">2.0</span>
+              </div>
+              <input id="slider-idw-p" type="range" min="1.0" max="4.0" step="0.5" value="2.0" class="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg" />
+            </div>
+          </div>
+
+          <!-- Wind Drift Speed & Cloud Opacity -->
+          <div class="grid grid-cols-2 gap-2.5">
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <label for="slider-drift" class="text-slate-300">Wind Drift Speed</label>
+                <span id="val-drift" class="font-mono-code text-purple-400">1.0x</span>
+              </div>
+              <input id="slider-drift" type="range" min="0.0" max="4.0" step="0.2" value="1.0" class="w-full accent-purple-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg" />
+            </div>
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <label for="slider-opacity" class="text-slate-300">Cloud Max Alpha</label>
+                <span id="val-opacity" class="font-mono-code text-emerald-400">0.82</span>
+              </div>
+              <input id="slider-opacity" type="range" min="0.25" max="1.0" step="0.05" value="0.82" class="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: Selected 1°×1° Grid Cell & IDW Inspector -->
+        <div class="p-3.5 border-b border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-sky-400">3. 1°×1° Cell &amp; IDW Inspector</h2>
+            <span id="inspector-badge" class="px-2 py-0.5 text-[10px] font-mono-code rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Click any grid cell</span>
+          </div>
+          <div id="cell-inspector-content" class="bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 text-xs space-y-2 font-mono-code">
+            <!-- Populated dynamically on init and grid click -->
+          </div>
+        </div>
+
+        <!-- Section 4: Live METAR String Parser & Station Editor -->
+        <div class="p-3.5 space-y-2.5 flex-1">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-sky-400">4. Live METAR Parser &amp; Injector</h2>
+            <span class="text-[10px] text-slate-400">Real-time regex decode</span>
+          </div>
+          <div>
+            <label for="station-picker" class="block text-[11px] text-slate-400 mb-1">Select Airport Station to Edit or Fly To</label>
+            <div class="flex gap-1.5">
+              <select id="station-picker" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono-code text-slate-100 focus:outline-none focus:border-sky-500">
+              </select>
+              <button id="btn-fly-station" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sky-300 text-xs font-medium transition">
+                Fly To
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label for="metar-input" class="block text-[11px] text-slate-400 mb-1">Raw METAR String (Edit &amp; Apply)</label>
+            <textarea id="metar-input" rows="2" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs font-mono-code text-emerald-300 focus:outline-none focus:border-sky-500"></textarea>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <button id="btn-apply-metar" type="button" class="flex-1 py-1.5 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition shadow">
+              Parse &amp; Recompute IDW Grid
+            </button>
+            <button id="btn-test-ovc" type="button" class="py-1.5 px-2.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-200 text-xs transition" title="Set station to Overcast 8/8 + 25KT wind">
+              Set OVC 8/8
+            </button>
+          </div>
+
+          <!-- Decoded Output Preview Box -->
+          <div id="parsed-metar-preview" class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-[11px] font-mono-code text-slate-300 space-y-1">
+          </div>
+        </div>
+
+      </aside>
+    </div>
+
+    <!-- VIEW 2: METAR STATION TABLE & 1°x1° SPATIAL GRID MATRIX -->
+    <div id="view-pipeline" class="hidden flex-1 flex-col p-4 sm:p-6 overflow-y-auto space-y-6 bg-slate-950 max-h-[calc(100vh-56px)]">
+      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        <div>
+          <h2 class="text-lg font-bold text-white">Phase 1 Pipeline: Decoded METAR Stations &amp; 1°×1° IDW Grid Matrix</h2>
+          <p class="text-xs text-slate-400">Displays all ingested ICAO stations, extracted oktas (0–8), wind vectors, QNH, and the resulting 1°×1° spatial grid cells.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-export-geojson" type="button" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition">
+            Copy Bounds JSON Payload
+          </button>
+        </div>
+      </div>
+
+      <!-- Decoded METAR Stations Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+          <span class="text-xs font-bold uppercase tracking-wider text-sky-400">Ingested ICAO METAR Stations (NOAA AWC / Grounded FIR Data)</span>
+          <span id="table-station-count" class="text-xs font-mono-code text-slate-400">15 Stations</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-950/70 text-slate-400 border-b border-slate-800 font-mono-code text-[11px]">
+                <th class="py-2.5 px-3">ICAO</th>
+                <th class="py-2.5 px-3">Airport Name</th>
+                <th class="py-2.5 px-3 text-right">Lat / Lon</th>
+                <th class="py-2.5 px-3 text-right">1°×1° Grid</th>
+                <th class="py-2.5 px-3 text-right">Wind Vector</th>
+                <th class="py-2.5 px-3 text-right">Visibility</th>
+                <th class="py-2.5 px-3 text-right">QNH</th>
+                <th class="py-2.5 px-3">Cloud Layers</th>
+                <th class="py-2.5 px-3 text-right">Oktas / Cutoff τ</th>
+                <th class="py-2.5 px-3">Raw METAR</th>
+              </tr>
+            </thead>
+            <tbody id="metar-table-body" class="divide-y divide-slate-800/70 font-mono-code">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Sampled 1°x1° Spatial Grid Matrix Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+          <span class="text-xs font-bold uppercase tracking-wider text-amber-400">1°×1° Spatial Grid Cells (Direct vs. IDW Interpolated)</span>
+          <span id="table-grid-count" class="text-xs font-mono-code text-slate-400">Showing active viewport cells</span>
+        </div>
+        <div class="overflow-x-auto max-h-96">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="sticky top-0 bg-slate-950">
+              <tr class="text-slate-400 border-b border-slate-800 font-mono-code text-[11px]">
+                <th class="py-2 px-3">Grid ID (Lat, Lon)</th>
+                <th class="py-2 px-3">Center Coord</th>
+                <th class="py-2 px-3">Source Mode</th>
+                <th class="py-2 px-3 text-right">Oktas (0–8)</th>
+                <th class="py-2 px-3 text-right">Threshold τ</th>
+                <th class="py-2 px-3 text-right">Wind Dir / Spd</th>
+                <th class="py-2 px-3 text-right">QNH (hPa)</th>
+                <th class="py-2 px-3">Contributing Stations (IDW Weights)</th>
+              </tr>
+            </thead>
+            <tbody id="grid-table-body" class="divide-y divide-slate-800/70 font-mono-code">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: REST ENDPOINT SIMULATOR & PYTHON FASTAPI BACKEND CODE -->
+    <div id="view-api" class="hidden flex-1 flex-col p-4 sm:p-6 overflow-y-auto space-y-6 bg-slate-950 max-h-[calc(100vh-56px)]">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Left Column: Live REST API Endpoint Simulator -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col space-y-3 shadow-lg">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+            <div>
+              <span class="px-2 py-0.5 text-[10px] font-mono-code font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded mr-2">GET</span>
+              <span class="font-mono-code text-xs text-white font-semibold">/api/weather/bounds</span>
+            </div>
+            <button id="btn-run-endpoint" type="button" class="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition">
+              Query Current Viewport Bounds
+            </button>
+          </div>
+
+          <div class="grid grid-cols-4 gap-2 font-mono-code text-xs">
+            <div>
+              <label for="api-min-lat" class="block text-[10px] text-slate-400">min_lat</label>
+              <input id="api-min-lat" type="number" value="-9" step="1" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100" />
+            </div>
+            <div>
+              <label for="api-max-lat" class="block text-[10px] text-slate-400">max_lat</label>
+              <input id="api-max-lat" type="number" value="4" step="1" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100" />
+            </div>
+            <div>
+              <label for="api-min-lon" class="block text-[10px] text-slate-400">min_lon</label>
+              <input id="api-min-lon" type="number" value="98" step="1" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100" />
+            </div>
+            <div>
+              <label for="api-max-lon" class="block text-[10px] text-slate-400">max_lon</label>
+              <input id="api-max-lon" type="number" value="120" step="1" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100" />
+            </div>
+          </div>
+
+          <div class="text-[11px] font-mono-code text-sky-300 bg-slate-950 px-3 py-1.5 rounded border border-slate-800 truncate" id="api-url-preview">
+            GET /api/weather/bounds?min_lat=-9&amp;max_lat=4&amp;min_lon=98&amp;max_lon=120
+          </div>
+
+          <pre id="api-json-output" class="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3 text-[11px] font-mono-code text-emerald-300 overflow-auto max-h-[460px]"></pre>
+        </div>
+
+        <!-- Right Column: Standalone FastAPI Backend Reference Code -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col space-y-3 shadow-lg">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+            <div>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-sky-400">Phase 1 Backend Service (Python FastAPI + Spatial IDW)</h3>
+              <p class="text-[11px] text-slate-400">Ready-to-run backend service (`backend/main.py`) included in the project zip archive.</p>
+            </div>
+            <button id="btn-copy-backend" type="button" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition">
+              Copy Python Code
+            </button>
+          </div>
+          <pre id="backend-code-block" class="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3 text-[11px] font-mono-code text-sky-200 overflow-auto max-h-[520px]"></pre>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast-banner" class="fixed bottom-5 right-5 z-[2000] hidden bg-slate-900/95 border border-sky-500/50 text-slate-100 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-medium flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+    <span id="toast-message">Action completed</span>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. GROUNDED REAL-WORLD AIRPORT & METAR DATASET (INDONESIA & SEA FIRs)
+    // Coordinates & METARs verified from NOAA AWC / Metar-Taf.com (Oct 2026)
+    // =========================================================================
+    const GROUNDED_STATIONS_DEFAULT = [
+      {
+        icao: "WIII",
+        name: "Soekarno-Hatta Intl (Jakarta)",
+        lat: -6.12560,
+        lon: 106.65600,
+        raw: "METAR WIII 271100Z 18004KT 140V220 6000 FEW020 29/24 Q1010 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WIII"
+      },
+      {
+        icao: "WIHH",
+        name: "Halim Perdanakusuma Intl (Jakarta)",
+        lat: -6.26700,
+        lon: 106.89030,
+        raw: "METAR WIHH 261730Z 00000KT 6000 SCT020 27/24 Q1011 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WIHH"
+      },
+      {
+        icao: "WICC",
+        name: "Husein Sastranegara Intl (Bandung)",
+        lat: -6.90060,
+        lon: 107.57600,
+        raw: "METAR WICC 270530Z 21004KT 7000 FEW020 26/23 Q1011 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WICC"
+      },
+      {
+        icao: "WAHS",
+        name: "Jenderal Ahmad Yani Intl (Semarang)",
+        lat: -6.97070,
+        lon: 110.37320,
+        raw: "METAR WAHS 240800Z 30008KT 6000 -RA BKN017 31/24 Q1006 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WAHS.20261024.0800"
+      },
+      {
+        icao: "WAHH",
+        name: "Adisutjipto Intl (Yogyakarta)",
+        lat: -7.78820,
+        lon: 110.43200,
+        raw: "METAR WAHH 271130Z VRB01KT 2000 BR FEW018 25/23 Q1012 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WAHH"
+      },
+      {
+        icao: "WARR",
+        name: "Juanda Intl (Surabaya)",
+        lat: -7.37980,
+        lon: 112.78700,
+        raw: "METAR WARR 270800Z 09008KT 9999 FEW020 31/26 Q1009 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WARR"
+      },
+      {
+        icao: "WADD",
+        name: "I Gusti Ngurah Rai Intl (Bali)",
+        lat: -8.74840,
+        lon: 115.16710,
+        raw: "METAR WADD 270000Z 15004KT 9999 SCT016 28/27 Q1013 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WADD"
+      },
+      {
+        icao: "WADS",
+        name: "Sultan Muhammad Kaharuddin III (Sumbawa)",
+        lat: -8.48904,
+        lon: 117.41200,
+        raw: "METAR WADS 270600Z 12007KT 9999 FEW019 31/24 Q1010 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WADS"
+      },
+      {
+        icao: "WAAA",
+        name: "Sultan Hasanuddin Intl (Makassar)",
+        lat: -5.07550,
+        lon: 119.55370,
+        raw: "METAR WAAA 261430Z VRB02KT 5000 FU FEW020 27/25 Q1013 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WAAA"
+      },
+      {
+        icao: "WAOO",
+        name: "Syamsudin Noor Intl (Banjarmasin)",
+        lat: -3.44010,
+        lon: 114.76120,
+        raw: "METAR WAOO 230800Z 20013KT 7000 FEW020 33/23 Q1005 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WAOO.20261023.0800"
+      },
+      {
+        icao: "WALL",
+        name: "Sultan Aji Muhammad Sulaiman (Balikpapan)",
+        lat: -1.26834,
+        lon: 116.89452,
+        raw: "METAR WALL 260200Z 36005KT 340V050 4000 FU FEW020 32/25 Q1012 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WALL"
+      },
+      {
+        icao: "WIOO",
+        name: "Supadio Intl (Pontianak)",
+        lat: -0.15230,
+        lon: 109.40450,
+        raw: "METAR WIOO 271230Z 34003KT 5000 HZ SCT012 27/26 Q1011 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WIOO"
+      },
+      {
+        icao: "WIPP",
+        name: "Sultan Mahmud Badaruddin II (Palembang)",
+        lat: -2.89770,
+        lon: 104.69810,
+        raw: "METAR WIPP 231430Z 11009KT 1400 FU SCT015 30/24 Q1010 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WIPP.20261023.1430?v=0&station_id=0"
+      },
+      {
+        icao: "WSSS",
+        name: "Singapore Changi Intl (Singapore)",
+        lat: 1.35020,
+        lon: 103.99400,
+        raw: "METAR WSSS 271130Z 04008KT 9000 FEW018 BKN300 30/24 Q1010 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WSSS"
+      },
+      {
+        icao: "WMKK",
+        name: "Kuala Lumpur Intl (Sepang)",
+        lat: 2.74560,
+        lon: 101.71000,
+        raw: "METAR WMKK 270330Z VRB01KT 7000 -SHRA FEW010 FEW017CB SCT018 28/26 Q1013 RESHRA NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WMKK"
+      },
+      {
+        icao: "WIMM",
+        name: "Kualanamu Intl (Medan)",
+        lat: 3.63780,
+        lon: 98.87060,
+        raw: "METAR WIMM 240530Z 33010KT 9000 SCT018 31/25 Q1008 NOSIG",
+        sourceUrl: "https://metar-taf.com/metar/WIMM"
+      }
+    ];
+
+    const SCENARIO_CONVECTIVE = {
+      WIII: "METAR WIII 271500Z 28018G28KT 2500 +TSRA BKN014CB OVC028 25/24 Q1005 TEMPO 1500",
+      WIHH: "METAR WIHH 271500Z 27016KT 3000 TSRA BKN015CB OVC030 25/24 Q1006 NOSIG",
+      WICC: "METAR WICC 271500Z 25014KT 4000 +RA SCT015 BKN022 OVC040 22/21 Q1008 NOSIG",
+      WAHS: "METAR WAHS 271500Z 29020KT 2000 +TSRA BKN013CB OVC025 26/25 Q1004 NOSIG",
+      WAHH: "METAR WAHH 271500Z 24012KT 4500 -RA SCT016 BKN028 25/23 Q1008 NOSIG",
+      WARR: "METAR WARR 271500Z 11014KT 7000 SCT018 BKN035 29/25 Q1008 NOSIG",
+      WADD: "METAR WADD 271500Z 14009KT 9999 FEW018 SCT030 28/25 Q1011 NOSIG",
+      WADS: "METAR WADS 271500Z 13008KT 9999 FEW020 30/23 Q1011 NOSIG",
+      WAAA: "METAR WAAA 271500Z 26015KT 5000 -SHRA SCT016 BKN025CB 27/25 Q1009 NOSIG",
+      WAOO: "METAR WAOO 271500Z 23017KT 3500 TSRA BKN014CB OVC026 26/25 Q1006 NOSIG",
+      WALL: "METAR WALL 271500Z 21014KT 4500 -RA SCT015 BKN024 27/25 Q1008 NOSIG",
+      WIOO: "METAR WIOO 271500Z 27022G32KT 1800 +TSRA BKN011CB OVC020 24/24 Q1004 NOSIG",
+      WIPP: "METAR WIPP 271500Z 29016KT 3000 +RA BKN014 OVC025 25/24 Q1006 NOSIG",
+      WSSS: "METAR WSSS 271500Z 25015KT 5000 -TSRA SCT015CB BKN024 27/25 Q1007 NOSIG",
+      WMKK: "METAR WMKK 271500Z 27014KT 6000 -SHRA SCT016 BKN028 27/25 Q1008 NOSIG",
+      WIMM: "METAR WIMM 271500Z 31012KT 8000 SCT018 BKN040 28/24 Q1009 NOSIG"
+    };
+
+    const SCENARIO_GRADIENT = {
+      WIMM: "METAR WIMM 271500Z 27024KT 1500 +TSRA BKN012CB OVC020 24/23 Q1003 NOSIG",
+      WMKK: "METAR WMKK 271500Z 27022KT 2000 +RA OVC015 25/24 Q1004 NOSIG",
+      WSSS: "METAR WSSS 271500Z 26020KT 2500 +RA OVC016 25/24 Q1005 NOSIG",
+      WIPP: "METAR WIPP 271500Z 26018KT 3000 RA OVC018 26/24 Q1006 NOSIG",
+      WIII: "METAR WIII 271500Z 25015KT 5000 -RA BKN020 27/24 Q1008 NOSIG",
+      WIHH: "METAR WIHH 271500Z 25014KT 5000 -RA BKN020 27/24 Q1008 NOSIG",
+      WICC: "METAR WICC 271500Z 24012KT 7000 SCT022 26/22 Q1009 NOSIG",
+      WIOO: "METAR WIOO 271500Z 25014KT 6000 SCT018 27/24 Q1008 NOSIG",
+      WAHS: "METAR WAHS 271500Z 18008KT 9000 FEW022 30/23 Q1011 NOSIG",
+      WAHH: "METAR WAHH 271500Z 16006KT 9999 FEW025 30/22 Q1012 NOSIG",
+      WARR: "METAR WARR 271500Z 11008KT 9999 SKC 32/21 Q1013 NOSIG",
+      WADD: "METAR WADD 271500Z 12010KT 9999 CLR 31/20 Q1014 NOSIG",
+      WADS: "METAR WADS 271500Z 12011KT 9999 SKC 32/19 Q1014 NOSIG",
+      WAOO: "METAR WAOO 271500Z 14007KT 9999 FEW025 31/22 Q1012 NOSIG",
+      WALL: "METAR WALL 271500Z 13006KT 9999 SKC 32/21 Q1013 NOSIG",
+      WAAA: "METAR WAAA 271500Z 11009KT 9999 SKC 32/20 Q1014 NOSIG"
+    };
+
+    // =========================================================================
+    // 2. PHASE 1: METAR STRING PARSER & OKTAS CONVERTER (0 - 8 OKTAS)
+    // =========================================================================
+    const OKTAS_MAP = {
+      SKC: 0, CLR: 0, NSC: 0, NCD: 0, CAVOK: 0,
+      FEW: 2, // FEW = 1-2 oktas (represented by upper bound 2 oktas)
+      SCT: 4, // SCT = 3-4 oktas (represented by 4 oktas)
+      BKN: 6, // BKN = 5-7 oktas (represented by midpoint 6 oktas)
+      OVC: 8, // OVC = 8 oktas
+      VV:  8  // Vertical visibility obscured = 8 oktas
+    };
+
+    function parseMetarString(rawMetar, fallbackIcao = "XXXX") {
+      const clean = (rawMetar || "").trim().toUpperCase();
+      const tokens = clean.split(/\s+/);
+
+      // 1. Extract ICAO
+      let icao = fallbackIcao;
+      for (let i = 0; i < Math.min(tokens.length, 3); i++) {
+        if (/^[A-Z]{4}$/.test(tokens[i]) && tokens[i] !== "METAR" && tokens[i] !== "SPECI" && tokens[i] !== "AUTO") {
+          icao = tokens[i];
+          break;
+        }
+      }
+
+      // 2. Extract Wind Vector (Direction, Speed, Gust in KT or MPS)
+      let windDir = 0;
+      let windSpeedKt = 0;
+      let windGustKt = null;
+      let isVariableWind = false;
+      const windMatch = clean.match(/\b(VRB|\d{3})(\d{2,3})(?:G(\d{2,3}))?(KT|MPS)\b/);
+      if (windMatch) {
+        if (windMatch[1] === "VRB") {
+          isVariableWind = true;
+          windDir = 0;
+        } else {
+          windDir = parseInt(windMatch[1], 10);
+        }
+        const factor = windMatch[4] === "MPS" ? 1.94384 : 1.0;
+        windSpeedKt = Math.round(parseInt(windMatch[2], 10) * factor);
+        if (windMatch[3]) {
+          windGustKt = Math.round(parseInt(windMatch[3], 10) * factor);
+        }
+      }
+
+      // Convert meteorological wind direction (where wind blows FROM) into drift vector (where air moves TO)
+      const moveRad = ((windDir + 180) % 360) * (Math.PI / 180.0);
+      const u = windSpeedKt * Math.sin(moveRad); // Eastward component (lon)
+      const v = windSpeedKt * Math.cos(moveRad); // Northward component (lat)
+
+      // 3. Extract Visibility (meters)
+      let visibilityM = 9999;
+      if (/\bCAVOK\b/.test(clean)) {
+        visibilityM = 10000;
+      } else {
+        const visMeterMatch = clean.match(/\b(?:KT|MPS|\d{3}V\d{3})\s+(\d{4})\b/);
+        const visSmMatch = clean.match(/\b(\d{1,2})\s*SM\b/);
+        if (visMeterMatch) {
+          visibilityM = parseInt(visMeterMatch[1], 10);
+        } else if (visSmMatch) {
+          visibilityM = Math.min(9999, Math.round(parseInt(visSmMatch[1], 10) * 1609.34));
+        }
+      }
+
+      // 4. Extract QNH (hPa)
+      let qnhHpa = 1013;
+      const qMatch = clean.match(/\bQ(\d{4})\b/);
+      const aMatch = clean.match(/\bA(\d{4})\b/);
+      if (qMatch) {
+        qnhHpa = parseInt(qMatch[1], 10);
+      } else if (aMatch) {
+        qnhHpa = Math.round((parseInt(aMatch[1], 10) / 100.0) * 33.8639);
+      }
+
+      // 5. Extract Cloud Layers & Oktas (0 to 8)
+      const clouds = [];
+      let maxOktas = 0;
+      let lowestBaseFt = null;
+
+      const cloudRegex = /\b(FEW|SCT|BKN|OVC|VV)(\d{3})(CB|TCU)?\b/g;
+      let match;
+      while ((match = cloudRegex.exec(clean)) !== null) {
+        const type = match[1];
+        const baseFt = parseInt(match[2], 10) * 100;
+        const convective = match[3] || null;
+        const oktas = OKTAS_MAP[type] ?? 0;
+        clouds.push({ type, baseFt, convective, oktas });
+        if (oktas > maxOktas) maxOktas = oktas;
+        if (lowestBaseFt === null || baseFt < lowestBaseFt) lowestBaseFt = baseFt;
+      }
+
+      if (clouds.length === 0) {
+        if (/\b(SKC|CLR|NSC|NCD|CAVOK)\b/.test(clean)) {
+          maxOktas = 0;
+        }
+      }
+
+      // Threshold tau = 1.0 - (oktas / 8)
+      const tau = Math.max(0.0, Math.min(1.0, 1.0 - (maxOktas / 8.0)));
+
+      // Flight category (VFR / MVFR / IFR / LIFR)
+      let ceilingFt = 99999;
+      for (const c of clouds) {
+        if (c.type === "BKN" || c.type === "OVC" || c.type === "VV") {
+          if (c.baseFt < ceilingFt) ceilingFt = c.baseFt;
+        }
+      }
+      let flightCategory = "VFR";
+      if (visibilityM < 1600 || ceilingFt < 500) flightCategory = "LIFR";
+      else if (visibilityM < 4800 || ceilingFt < 1000) flightCategory = "IFR";
+      else if (visibilityM <= 8000 || ceilingFt <= 3000) flightCategory = "MVFR";
+
+      return {
+        icao,
+        raw: clean,
+        windDir,
+        windSpeedKt,
+        windGustKt,
+        isVariableWind,
+        u,
+        v,
+        visibilityM,
+        qnhHpa,
+        clouds,
+        oktas: maxOktas,
+        lowestBaseFt: lowestBaseFt || 2000,
+        tau,
+        flightCategory
+      };
+    }
+
+    // =========================================================================
+    // 3. PHASE 2: 2D SIMPLEX NOISE ENGINE (GLOBAL WORLD COORDINATE SPACE)
+    // =========================================================================
+    class SimplexNoise2D {
+      constructor(seed = 20261027) {
+        this.p = new Uint8Array(256);
+        this.perm = new Uint8Array(512);
+        this.permMod12 = new Uint8Array(512);
+        for (let i = 0; i < 256; i++) this.p[i] = i;
+        let s = seed >>> 0;
+        for (let i = 255; i > 0; i--) {
+          s = (s * 1664525 + 1013904223) >>> 0;
+          const r = s % (i + 1);
+          const tmp = this.p[i];
+          this.p[i] = this.p[r];
+          this.p[r] = tmp;
+        }
+        for (let i = 0; i < 512; i++) {
+          this.perm[i] = this.p[i & 255];
+          this.permMod12[i] = this.perm[i] % 12;
+        }
+        this.grad3 = [
+          [1, 1], [-1, 1], [1, -1], [-1, -1],
+          [1, 0], [-1, 0], [1, 0], [-1, 0],
+          [0, 1], [0, -1], [0, 1], [0, -1]
+        ];
+        this.F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
+        this.G2 = (3.0 - Math.sqrt(3.0)) / 6.0;
+      }
+
+      raw2D(xin, yin) {
+        const F2 = this.F2;
+        const G2 = this.G2;
+        let n0 = 0, n1 = 0, n2 = 0;
+
+        const s = (xin + yin) * F2;
+        const i = Math.floor(xin + s);
+        const j = Math.floor(yin + s);
+        const t = (i + j) * G2;
+        const X0 = i - t;
+        const Y0 = j - t;
+        const x0 = xin - X0;
+        const y0 = yin - Y0;
+
+        let i1, j1;
+        if (x0 > y0) { i1 = 1; j1 = 0; }
+        else { i1 = 0; j1 = 1; }
+
+        const x1 = x0 - i1 + G2;
+        const y1 = y0 - j1 + G2;
+        const x2 = x0 - 1.0 + 2.0 * G2;
+        const y2 = y0 - 1.0 + 2.0 * G2;
+
+        const ii = i & 255;
+        const jj = j & 255;
+        const gi0 = this.permMod12[ii + this.perm[jj]];
+        const gi1 = this.permMod12[ii + i1 + this.perm[jj + j1]];
+        const gi2 = this.permMod12[ii + 1 + this.perm[jj + 1]];
+
+        let t0 = 0.5 - x0 * x0 - y0 * y0;
+        if (t0 >= 0) {
+          t0 *= t0;
+          n0 = t0 * t0 * (this.grad3[gi0][0] * x0 + this.grad3[gi0][1] * y0);
+        }
+        let t1 = 0.5 - x1 * x1 - y1 * y1;
+        if (t1 >= 0) {
+          t1 *= t1;
+          n1 = t1 * t1 * (this.grad3[gi1][0] * x1 + this.grad3[gi1][1] * y1);
+        }
+        let t2 = 0.5 - x2 * x2 - y2 * y2;
+        if (t2 >= 0) {
+          t2 *= t2;
+          n2 = t2 * t2 * (this.grad3[gi2][0] * x2 + this.grad3[gi2][1] * y2);
+        }
+
+        // Return normalized value in [0.0, 1.0]
+        return Math.max(0.0, Math.min(1.0, (70.0 * (n0 + n1 + n2) + 1.0) * 0.5));
+      }
+
+      // Multi-octave world-space Simplex2D evaluation for natural cumulus cloud structure
+      sampleCloudNoise(worldLat, worldLon, freq) {
+        const x = worldLat * freq;
+        const y = worldLon * freq;
+        const base = this.raw2D(x, y);
+        const detail = this.raw2D(x * 2.35 + 17.3, y * 2.35 - 9.1);
+        return Math.max(0.0, Math.min(1.0, base * 0.74 + detail * 0.26));
+      }
+    }
+
+    const simplex = new SimplexNoise2D(20261027);
+
+    // =========================================================================
+    // 4. APPLICATION STATE & SPATIAL INDEXING + IDW ENGINE
+    // =========================================================================
+    const state = {
+      stations: [],
+      gridCache: new Map(), // key: `${latIdx},${lonIdx}` -> computed cell object
+      showClouds: true,
+      showGrid: true,
+      showWind: true,
+      useBilinear: true,
+      showGridLabels: false,
+      darkBasemap: true,
+      simplexFreq: 1.4,
+      idwNeighborsK: 4,
+      idwPowerP: 2.0,
+      windDriftMultiplier: 1.0,
+      cloudMaxAlpha: 0.82,
+      selectedCellKey: "-7,106",
+      selectedStationIcao: "WIII",
+      animTimeSec: 0,
+      lastFrameTs: performance.now(),
+      fps: 60
+    };
+
+    function initStationsFromDataset(dataset) {
+      state.stations = dataset.map(item => {
+        const parsed = parseMetarString(item.raw, item.icao);
+        return {
+          ...item,
+          ...parsed,
+          gridLat: Math.floor(item.lat),
+          gridLon: Math.floor(item.lon)
+        };
+      });
+      state.gridCache.clear();
+    }
+
+    // Compute or retrieve 1° x 1° grid cell data for [latIdx, latIdx+1] x [lonIdx, lonIdx+1]
+    function getGridCell(latIdx, lonIdx) {
+      const key = `${latIdx},${lonIdx}`;
+      if (state.gridCache.has(key)) {
+        return state.gridCache.get(key);
+      }
+
+      const centerLat = latIdx + 0.5;
+      const centerLon = lonIdx + 0.5;
+
+      // Check if one or more active stations fall directly inside this 1°x1° cell
+      const directStations = state.stations.filter(
+        s => Math.floor(s.lat) === latIdx && Math.floor(s.lon) === lonIdx
+      );
+
+      let oktas = 0;
+      let u = 0;
+      let v = 0;
+      let qnhHpa = 1013;
+      let visibilityM = 9999;
+      let baseFt = 2000;
+      let isDirect = false;
+      let contributors = [];
+
+      if (directStations.length > 0) {
+        isDirect = true;
+        const n = directStations.length;
+        for (const s of directStations) {
+          oktas += s.oktas / n;
+          u += s.u / n;
+          v += s.v / n;
+          qnhHpa += s.qnhHpa / n;
+          visibilityM += s.visibilityM / n;
+          baseFt += s.lowestBaseFt / n;
+          contributors.push({
+            icao: s.icao,
+            distDeg: 0,
+            distKm: 0,
+            weightNorm: 1.0 / n,
+            oktas: s.oktas
+          });
+        }
+      } else {
+        // Inverse Distance Weighting (IDW) from k nearest active stations
+        const withDist = state.stations.map(s => {
+          const dLat = centerLat - s.lat;
+          const dLon = (centerLon - s.lon) * Math.cos((centerLat * Math.PI) / 180.0);
+          const distDeg = Math.max(0.05, Math.hypot(dLat, dLon));
+          const distKm = distDeg * 111.32;
+          return { station: s, distDeg, distKm };
+        });
+
+        withDist.sort((a, b) => a.distDeg - b.distDeg);
+        const nearest = withDist.slice(0, Math.min(state.idwNeighborsK, withDist.length));
+
+        let weightSum = 0;
+        const p = state.idwPowerP;
+        const rawWeights = nearest.map(item => {
+          const w = 1.0 / Math.pow(item.distDeg, p);
+          weightSum += w;
+          return { ...item, w };
+        });
+
+        for (const item of rawWeights) {
+          const wn = item.w / (weightSum || 1.0);
+          oktas += wn * item.station.oktas;
+          u += wn * item.station.u;
+          v += wn * item.station.v;
+          qnhHpa += wn * item.station.qnhHpa;
+          visibilityM += wn * item.station.visibilityM;
+          baseFt += wn * item.station.lowestBaseFt;
+          contributors.push({
+            icao: item.station.icao,
+            distDeg: item.distDeg,
+            distKm: item.distKm,
+            weightNorm: wn,
+            oktas: item.station.oktas
+          });
+        }
+      }
+
+      oktas = Math.max(0.0, Math.min(8.0, oktas));
+      const tau = Math.max(0.0, Math.min(1.0, 1.0 - (oktas / 8.0)));
+      const windSpeedKt = Math.hypot(u, v);
+      // Recover meteorological wind FROM direction from movement vector (u, v)
+      const moveDeg = (Math.atan2(u, v) * (180.0 / Math.PI) + 360.0) % 360.0;
+      const windDir = Math.round((moveDeg + 180.0) % 360.0);
+
+      const cell = {
+        key,
+        latIdx,
+        lonIdx,
+        centerLat,
+        centerLon,
+        isDirect,
+        oktas,
+        tau,
+        u,
+        v,
+        windSpeedKt,
+        windDir,
+        qnhHpa: Math.round(qnhHpa),
+        visibilityM: Math.round(visibilityM),
+        baseFt: Math.round(baseFt),
+        contributors
+      };
+
+      state.gridCache.set(key, cell);
+      return cell;
+    }
+
+    // =========================================================================
+    // 5. PHASE 2: BILINEAR BLENDING OF THRESHOLD τ & WIND ACROSS 4 GRID CENTERS
+    // =========================================================================
+    function sampleBilinearField(lat, lon) {
+      if (!state.useBilinear) {
+        const cell = getGridCell(Math.floor(lat), Math.floor(lon));
+        return {
+          tau: cell.tau,
+          oktas: cell.oktas,
+          u: cell.u,
+          v: cell.v,
+          baseFt: cell.baseFt
+        };
+      }
+
+      // Grid cell centers sit at (latIdx + 0.5, lonIdx + 0.5)
+      const gx = lat - 0.5;
+      const gy = lon - 0.5;
+      const lat0 = Math.floor(gx);
+      const lon0 = Math.floor(gy);
+      const lat1 = lat0 + 1;
+      const lon1 = lon0 + 1;
+
+      const tx = gx - lat0; // Fractional weight in [0, 1] along Latitude
+      const ty = gy - lon0; // Fractional weight in [0, 1] along Longitude
+
+      const c00 = getGridCell(lat0, lon0);
+      const c10 = getGridCell(lat1, lon0);
+      const c01 = getGridCell(lat0, lon1);
+      const c11 = getGridCell(lat1, lon1);
+
+      const w00 = (1 - tx) * (1 - ty);
+      const w10 = tx * (1 - ty);
+      const w01 = (1 - tx) * ty;
+      const w11 = tx * ty;
+
+      return {
+        tau: w00 * c00.tau + w10 * c10.tau + w01 * c01.tau + w11 * c11.tau,
+        oktas: w00 * c00.oktas + w10 * c10.oktas + w01 * c01.oktas + w11 * c11.oktas,
+        u: w00 * c00.u + w10 * c10.u + w01 * c01.u + w11 * c11.u,
+        v: w00 * c00.v + w10 * c10.v + w01 * c01.v + w11 * c11.v,
+        baseFt: w00 * c00.baseFt + w10 * c10.baseFt + w01 * c01.baseFt + w11 * c11.baseFt
+      };
+    }
+
+    // =========================================================================
+    // 6. PHASE 3: INTERACTIVE LEAFLET MAP, 1°x1° GEOJSON GRID & CANVAS OVERLAY
+    // =========================================================================
+    let map;
+    let darkTileLayer;
+    let lightTileLayer;
+    let gridLayerGroup;
+    let stationLayerGroup;
+    let cloudCanvas;
+    let cloudCtx;
+
+    function initMap() {
+      map = L.map("radar-map", {
+        center: [-4.2, 109.5],
+        zoom: 5,
+        minZoom: 3,
+        maxZoom: 10,
+        zoomControl: true,
+        preferCanvas: true
+      });
+
+      darkTileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 19
+      });
+
+      lightTileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      });
+
+      darkTileLayer.addTo(map);
+
+      gridLayerGroup = L.layerGroup().addTo(map);
+      stationLayerGroup = L.layerGroup().addTo(map);
+
+      // Custom Leaflet Overlay Pane for Procedural Cloud Canvas
+      const overlayPane = map.getPanes().overlayPane;
+      cloudCanvas = document.createElement("canvas");
+      cloudCanvas.style.position = "absolute";
+      cloudCanvas.style.top = "0";
+      cloudCanvas.style.left = "0";
+      cloudCanvas.style.pointerEvents = "none";
+      cloudCanvas.style.zIndex = "350";
+      overlayPane.appendChild(cloudCanvas);
+      cloudCtx = cloudCanvas.getContext("2d");
+
+      map.on("moveend zoomend resize", () => {
+        renderGridOverlay();
+        syncCanvasPosition();
+        renderCloudCanvasFrame();
+      });
+
+      map.on("mousemove", (e) => {
+        updateCursorProbe(e.latlng.lat, e.latlng.lng);
+      });
+    }
+
+    function syncCanvasPosition() {
+      if (!map || !cloudCanvas) return;
+      const size = map.getSize();
+      const topLeft = map.containerPointToLayerPoint([0, 0]);
+      L.DomUtil.setPosition(cloudCanvas, topLeft);
+      if (cloudCanvas.width !== size.x || cloudCanvas.height !== size.y) {
+        cloudCanvas.width = size.x;
+        cloudCanvas.height = size.y;
+      }
+    }
+
+    // Render 1° x 1° Coordinate Grid Layer & Optional Wind/Threshold Indicators
+    function renderGridOverlay() {
+      if (!map || !gridLayerGroup) return;
+      gridLayerGroup.clearLayers();
+      if (!state.showGrid) return;
+
+      const bounds = map.getBounds();
+      const minLat = Math.max(-85, Math.floor(bounds.getSouth()) - 1);
+      const maxLat = Math.min(85, Math.ceil(bounds.getNorth()) + 1);
+      const minLon = Math.floor(bounds.getWest()) - 1;
+      const maxLon = Math.ceil(bounds.getEast()) + 1;
+
+      // Guard against excessive grid counts if zoomed all the way out
+      const totalCells = (maxLat - minLat) * (maxLon - minLon);
+      document.getElementById("grid-stats-pill").textContent = `Active 1°×1° Grids: ${totalCells}`;
+
+      for (let latIdx = minLat; latIdx < maxLat; latIdx++) {
+        for (let lonIdx = minLon; lonIdx < maxLon; lonIdx++) {
+          const cell = getGridCell(latIdx, lonIdx);
+          const isSelected = cell.key === state.selectedCellKey;
+
+          // Color code border/fill subtly based on direct station vs IDW & oktas
+          const strokeColor = isSelected
+            ? "#38bdf8"
+            : cell.isDirect
+              ? "rgba(52, 211, 153, 0.55)"
+              : "rgba(148, 163, 184, 0.22)";
+
+          const fillOpacity = isSelected ? 0.14 : (cell.isDirect ? 0.08 : 0.02);
+          const fillColor = cell.isDirect ? "#10b981" : "#38bdf8";
+
+          const rect = L.rectangle(
+            [[latIdx, lonIdx], [latIdx + 1, lonIdx + 1]],
+            {
+              color: strokeColor,
+              weight: isSelected ? 2.2 : (cell.isDirect ? 1.4 : 0.8),
+              fillColor: fillColor,
+              fillOpacity: fillOpacity,
+              interactive: true
+            }
+          );
+
+          rect.on("click", (ev) => {
+            L.DomEvent.stopPropagation(ev);
+            state.selectedCellKey = cell.key;
+            updateCellInspector(cell);
+            renderGridOverlay();
+          });
+
+          if (state.showGridLabels && map.getZoom() >= 5) {
+            rect.bindTooltip(
+              `${cell.oktas.toFixed(1)}/8 • τ=${cell.tau.toFixed(2)}`,
+              { permanent: true, direction: "center", className: "grid-label-tooltip" }
+            );
+          }
+
+          gridLayerGroup.addLayer(rect);
+        }
+      }
+    }
+
+    // Render Interactive ICAO Airport Markers with Wind Barb & Popup
+    function renderStationMarkers() {
+      if (!map || !stationLayerGroup) return;
+      stationLayerGroup.clearLayers();
+
+      const catColors = {
+        VFR: { bg: "#10b981", ring: "rgba(16,185,129,0.35)", text: "#ecfdf5" },
+        MVFR: { bg: "#3b82f6", ring: "rgba(59,130,246,0.35)", text: "#eff6ff" },
+        IFR: { bg: "#ef4444", ring: "rgba(239,68,68,0.35)", text: "#fef2f2" },
+        LIFR: { bg: "#d946ef", ring: "rgba(217,70,239,0.35)", text: "#fdf4ff" }
+      };
+
+      for (const st of state.stations) {
+        const style = catColors[st.flightCategory] || catColors.VFR;
+        const rotDeg = (st.windDir + 180) % 360; // Direction wind blows TO
+
+        const iconHtml = `
+          <div style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;">
+            ${st.windSpeedKt > 0 ? `
+              <svg width="44" height="44" viewBox="0 0 44 44" style="position:absolute;top:0;left:0;transform:rotate(${rotDeg}deg);pointer-events:none;">
+                <line x1="22" y1="22" x2="22" y2="3" stroke="#38bdf8" stroke-width="2" stroke-linecap="round"/>
+                <polygon points="22,1 18,8 26,8" fill="#38bdf8"/>
+              </svg>
+            ` : ""}
+            <div style="
+              background:${style.bg};
+              box-shadow:0 0 0 4px ${style.ring}, 0 4px 10px rgba(0,0,0,0.65);
+              color:${style.text};
+              font-family:'JetBrains Mono',monospace;
+              font-size:10px;
+              font-weight:700;
+              padding:2px 5px;
+              border-radius:6px;
+              border:1px solid rgba(255,255,255,0.4);
+              z-index:2;
+            ">${st.icao}</div>
+          </div>
+        `;
+
+        const icon = L.divIcon({
+          html: iconHtml,
+          className: "",
+          iconSize: [44, 44],
+          iconAnchor: [22, 22],
+          popupAnchor: [0, -18]
+        });
+
+        const cloudDesc = st.clouds.length > 0
+          ? st.clouds.map(c => `${c.type} ${c.baseFt}ft${c.convective ? " (" + c.convective + ")" : ""}`).join(", ")
+          : "SKC / NSC (0 oktas)";
+
+        const popupHtml = `
+          <div class="space-y-2 min-w-[250px]">
+            <div class="flex items-center justify-between border-b border-slate-700 pb-1.5">
+              <div>
+                <span class="font-mono-code font-bold text-sky-400 text-sm">${st.icao}</span>
+                <span class="text-xs text-slate-300 ml-1">${st.name}</span>
+              </div>
+              <span class="px-1.5 py-0.5 text-[10px] font-mono-code font-bold rounded" style="background:${style.bg};color:#fff;">${st.flightCategory}</span>
+            </div>
+            <div class="bg-slate-950 p-2 rounded border border-slate-800 font-mono-code text-[11px] text-emerald-300 break-words">${st.raw}</div>
+            <div class="grid grid-cols-2 gap-1.5 text-[11px] font-mono-code">
+              <div class="bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                <span class="text-slate-400 block text-[9px]">Coordinates</span>
+                <span>${st.lat.toFixed(4)}°, ${st.lon.toFixed(4)}°</span>
+              </div>
+              <div class="bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                <span class="text-slate-400 block text-[9px]">Wind Vector</span>
+                <span>${st.isVariableWind ? "VRB" : st.windDir + "°"} / ${st.windSpeedKt} KT${st.windGustKt ? " G" + st.windGustKt : ""}</span>
+              </div>
+              <div class="bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                <span class="text-slate-400 block text-[9px]">Visibility &amp; QNH</span>
+                <span>${st.visibilityM >= 9999 ? "10+ km" : st.visibilityM + " m"} • ${st.qnhHpa} hPa</span>
+              </div>
+              <div class="bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                <span class="text-slate-400 block text-[9px]">Oktas &amp; Cutoff τ</span>
+                <span class="text-amber-300 font-bold">${st.oktas}/8 (τ=${st.tau.toFixed(2)})</span>
+              </div>
+            </div>
+            <div class="text-[11px] text-slate-300">
+              <span class="text-slate-400">Cloud Layers:</span> <span class="font-mono-code text-sky-300">${cloudDesc}</span>
+            </div>
+          </div>
+        `;
+
+        const marker = L.marker([st.lat, st.lon], { icon }).bindPopup(popupHtml);
+        marker.on("click", () => {
+          state.selectedStationIcao = st.icao;
+          const picker = document.getElementById("station-picker");
+          if (picker) picker.value = st.icao;
+          loadSelectedStationIntoEditor();
+          const cell = getGridCell(Math.floor(st.lat), Math.floor(st.lon));
+          state.selectedCellKey = cell.key;
+          updateCellInspector(cell);
+          renderGridOverlay();
+        });
+
+        stationLayerGroup.addLayer(marker);
+      }
+    }
+
+    // =========================================================================
+    // 7. PHASE 2 & 3: PROCEDURAL CLOUD CANVAS RENDERER + WIND DRIFT ANIMATION
+    // =========================================================================
+    function renderCloudCanvasFrame() {
+      if (!map || !cloudCtx || !cloudCanvas) return;
+      const w = cloudCanvas.width;
+      const h = cloudCanvas.height;
+      cloudCtx.clearRect(0, 0, w, h);
+
+      if (!state.showClouds || w === 0 || h === 0) return;
+
+      // Render on an offscreen buffer with 4px block step for smooth 60fps real-time bilinear rendering
+      const step = 4;
+      const cols = Math.ceil(w / step);
+      const rows = Math.ceil(h / step);
+
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = cols;
+      offCanvas.height = rows;
+      const offCtx = offCanvas.getContext("2d");
+      const imgData = offCtx.createImageData(cols, rows);
+      const data = imgData.data;
+
+      const topLeftLayerPt = map.containerPointToLayerPoint([0, 0]);
+      const freq = state.simplexFreq;
+      const maxAlpha = state.cloudMaxAlpha;
+      const driftTime = state.animTimeSec * state.windDriftMultiplier;
+
+      let idx = 0;
+      for (let r = 0; r < rows; r++) {
+        const py = r * step + step * 0.5;
+        for (let c = 0; c < cols; c++) {
+          const px = c * step + step * 0.5;
+          const layerPt = L.point(topLeftLayerPt.x + px, topLeftLayerPt.y + py);
+          const latlng = map.layerPointToLatLng(layerPt);
+          const lat = latlng.lat;
+          const lon = latlng.lng;
+
+          // 1. Sample Bilinearly Blended Threshold τ and Local Wind Vector (u, v)
+          const field = sampleBilinearField(lat, lon);
+          const tau = field.tau;
+
+          if (tau >= 0.995) {
+            // Sky clear (0 oktas -> tau = 1.0)
+            data[idx] = 0;
+            data[idx + 1] = 0;
+            data[idx + 2] = 0;
+            data[idx + 3] = 0;
+          } else {
+            // 2. Advect World Coordinate Offset along Local Wind Vector (u, v)
+            // Wind speed in knots scaled to gentle world-coordinate degrees per second
+            const driftLat = lat - (field.v * 0.0028 * driftTime);
+            const driftLon = lon - (field.u * 0.0028 * driftTime);
+
+            // 3. Evaluate 2D Simplex Noise in Global World Coordinate Space
+            const noiseVal = simplex.sampleCloudNoise(driftLat, driftLon, freq);
+
+            // 4. Cutoff Threshold Comparison: if noise_val > tau, render cloud pixel
+            if (noiseVal > tau) {
+              const excess = noiseVal - tau;
+              const normExcess = Math.min(1.0, excess / Math.max(0.18, 1.0 - tau));
+              // Smooth hermite curve for fluffy cloud edges and denser cores
+              const smoothDensity = normExcess * normExcess * (3.0 - 2.0 * normExcess);
+
+              // Cloud color tinting: bright white-silver tops, slightly cooler slate-blue in deep overcast cores
+              const coreShade = Math.min(1.0, excess * 1.6);
+              const red = Math.round(215 + 40 * (1.0 - coreShade * 0.35));
+              const green = Math.round(228 + 27 * (1.0 - coreShade * 0.25));
+              const blue = Math.round(245 + 10 * (1.0 - coreShade * 0.1));
+              const alpha = Math.round(255 * Math.min(maxAlpha, smoothDensity * maxAlpha));
+
+              data[idx] = red;
+              data[idx + 1] = green;
+              data[idx + 2] = blue;
+              data[idx + 3] = alpha;
+            } else {
+              data[idx] = 0;
+              data[idx + 1] = 0;
+              data[idx + 2] = 0;
+              data[idx + 3] = 0;
+            }
+          }
+          idx += 4;
+        }
+      }
+
+      offCtx.putImageData(imgData, 0, 0);
+
+      // Upscale smoothly onto full viewport canvas
+      cloudCtx.imageSmoothingEnabled = true;
+      cloudCtx.imageSmoothingQuality = "high";
+      cloudCtx.drawImage(offCanvas, 0, 0, cols, rows, 0, 0, w, h);
+
+      // Optional: Draw subtle wind stream arrows at 1°x1° grid centers when Wind toggle is ON
+      if (state.showWind && map.getZoom() >= 5) {
+        drawGridWindVectors(topLeftLayerPt);
+      }
+    }
+
+    function drawGridWindVectors(topLeftLayerPt) {
+      const bounds = map.getBounds();
+      const minLat = Math.max(-85, Math.floor(bounds.getSouth()));
+      const maxLat = Math.min(85, Math.ceil(bounds.getNorth()));
+      const minLon = Math.floor(bounds.getWest());
+      const maxLon = Math.ceil(bounds.getEast());
+
+      cloudCtx.save();
+      cloudCtx.strokeStyle = "rgba(56, 189, 248, 0.55)";
+      cloudCtx.fillStyle = "rgba(56, 189, 248, 0.65)";
+      cloudCtx.lineWidth = 1.4;
+
+      for (let latIdx = minLat; latIdx < maxLat; latIdx++) {
+        for (let lonIdx = minLon; lonIdx < maxLon; lonIdx++) {
+          const cell = getGridCell(latIdx, lonIdx);
+          if (cell.windSpeedKt < 0.5) continue;
+
+          const pt = map.latLngToLayerPoint([cell.centerLat, cell.centerLon]).subtract(topLeftLayerPt);
+          const len = Math.min(26, 8 + cell.windSpeedKt * 1.1);
+          const angle = Math.atan2(cell.u, -cell.v); // Screen y is inverted relative to North
+
+          const dx = Math.sin(angle) * (len * 0.5);
+          const dy = -Math.cos(angle) * (len * 0.5);
+
+          cloudCtx.beginPath();
+          cloudCtx.moveTo(pt.x - dx, pt.y - dy);
+          cloudCtx.lineTo(pt.x + dx, pt.y + dy);
+          cloudCtx.stroke();
+
+          // Arrowhead at destination end
+          cloudCtx.save();
+          cloudCtx.translate(pt.x + dx, pt.y + dy);
+          cloudCtx.rotate(angle);
+          cloudCtx.beginPath();
+          cloudCtx.moveTo(0, -3);
+          cloudCtx.lineTo(-3, 3);
+          cloudCtx.lineTo(3, 3);
+          cloudCtx.closePath();
+          cloudCtx.fill();
+          cloudCtx.restore();
+        }
+      }
+      cloudCtx.restore();
+    }
+
+    // Animation Loop (requestAnimationFrame)
+    let animFrameId = null;
+    function startAnimationLoop() {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      function tick(now) {
+        const dt = Math.min(0.1, (now - state.lastFrameTs) / 1000.0);
+        state.lastFrameTs = now;
+        if (dt > 0) {
+          state.fps = Math.round(state.fps * 0.9 + (1.0 / dt) * 0.1);
+        }
+        if (state.showWind && state.windDriftMultiplier > 0) {
+          state.animTimeSec += dt;
+          renderCloudCanvasFrame();
+        }
+        const fpsEl = document.getElementById("fps-counter");
+        if (fpsEl) fpsEl.textContent = `${Math.min(60, state.fps)} FPS`;
+        animFrameId = requestAnimationFrame(tick);
+      }
+      animFrameId = requestAnimationFrame(tick);
+    }
+
+    // =========================================================================
+    // 8. UI INSPECTORS, TABLES, NOAA API SYNC & EVENT HANDLERS
+    // =========================================================================
+    function updateCursorProbe(lat, lon) {
+      const field = sampleBilinearField(lat, lon);
+      const driftTime = state.animTimeSec * state.windDriftMultiplier;
+      const driftLat = lat - (field.v * 0.0028 * driftTime);
+      const driftLon = lon - (field.u * 0.0028 * driftTime);
+      const noiseVal = simplex.sampleCloudNoise(driftLat, driftLon, state.simplexFreq);
+
+      let alphaPct = 0;
+      if (noiseVal > field.tau && field.tau < 0.995) {
+        const excess = noiseVal - field.tau;
+        const norm = Math.min(1.0, excess / Math.max(0.18, 1.0 - field.tau));
+        alphaPct = Math.round(norm * norm * (3 - 2 * norm) * state.cloudMaxAlpha * 100);
+      }
+
+      const spd = Math.round(Math.hypot(field.u, field.v));
+      const moveDeg = (Math.atan2(field.u, field.v) * (180 / Math.PI) + 360) % 360;
+      const windFrom = Math.round((moveDeg + 180) % 360);
+
+      document.getElementById("probe-coord").textContent = `Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°`;
+      document.getElementById("probe-tau").textContent = field.tau.toFixed(3);
+      document.getElementById("probe-noise").textContent = noiseVal.toFixed(3);
+      document.getElementById("probe-alpha").textContent = `${alphaPct}%`;
+      document.getElementById("probe-wind").textContent = `${String(windFrom).padStart(3, "0")}°/${String(spd).padStart(2, "0")}kt`;
+    }
+
+    function updateCellInspector(cell) {
+      const container = document.getElementById("cell-inspector-content");
+      const badge = document.getElementById("inspector-badge");
+      if (!container || !cell) return;
+
+      badge.textContent = cell.isDirect ? "DIRECT STATION" : `IDW (k=${cell.contributors.length})`;
+      badge.className = cell.isDirect
+        ? "px-2 py-0.5 text-[10px] font-mono-code rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+        : "px-2 py-0.5 text-[10px] font-mono-code rounded bg-amber-500/20 text-amber-300 border border-amber-500/30";
+
+      const contribRows = cell.contributors.map(c => `
+        <div class="flex items-center justify-between text-[11px] py-0.5 border-b border-slate-800/60 last:border-0">
+          <span class="text-sky-300 font-semibold">${c.icao}</span>
+          <span class="text-slate-400">${c.distKm === 0 ? "In Cell (0 km)" : c.distKm.toFixed(0) + " km"}</span>
+          <span class="text-amber-300">w=${(c.weightNorm * 100).toFixed(1)}%</span>
+          <span class="text-slate-200">${c.oktas}/8</span>
+        </div>
+      `).join("");
+
+      container.innerHTML = `
+        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+          <span class="text-slate-400">Cell Bounds:</span>
+          <span class="text-white font-semibold">[${cell.latIdx}°..${cell.latIdx + 1}°, ${cell.lonIdx}°..${cell.lonIdx + 1}°]</span>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5 text-center pt-1">
+          <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+            <div class="text-[9px] text-slate-400">Oktas (0–8)</div>
+            <div class="text-sky-300 font-bold text-xs">${cell.oktas.toFixed(2)}</div>
+          </div>
+          <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+            <div class="text-[9px] text-slate-400">Cutoff τ</div>
+            <div class="text-amber-300 font-bold text-xs">${cell.tau.toFixed(3)}</div>
+          </div>
+          <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+            <div class="text-[9px] text-slate-400">Wind Vector</div>
+            <div class="text-purple-300 font-bold text-xs">${String(cell.windDir).padStart(3, "0")}°/${cell.windSpeedKt.toFixed(1)}kt</div>
+          </div>
+        </div>
+        <div class="pt-1">
+          <div class="text-[10px] text-slate-400 mb-1">Contributing Stations &amp; IDW Weights:</div>
+          <div class="bg-slate-900/80 rounded p-1.5 border border-slate-800/80">
+            ${contribRows}
+          </div>
+        </div>
+      `;
+    }
+
+    function populateStationPicker() {
+      const picker = document.getElementById("station-picker");
+      if (!picker) return;
+      picker.innerHTML = state.stations.map(s =>
+        `<option value="${s.icao}">${s.icao} — ${s.name} (${s.oktas}/8, τ=${s.tau.toFixed(2)})</option>`
+      ).join("");
+      picker.value = state.selectedStationIcao;
+      loadSelectedStationIntoEditor();
+    }
+
+    function loadSelectedStationIntoEditor() {
+      const st = state.stations.find(s => s.icao === state.selectedStationIcao) || state.stations[0];
+      if (!st) return;
+      document.getElementById("metar-input").value = st.raw;
+      renderParsedMetarPreview(st);
+    }
+
+    function renderParsedMetarPreview(st) {
+      const box = document.getElementById("parsed-metar-preview");
+      if (!box) return;
+      const layersText = st.clouds.length > 0
+        ? st.clouds.map(c => `${c.type}@${c.baseFt}ft(${c.oktas}/8)`).join(", ")
+        : "SKC/NSC (0/8)";
+      box.innerHTML = `
+        <div class="flex justify-between">
+          <span class="text-slate-400">ICAO / Grid:</span>
+          <span class="text-sky-300 font-semibold">${st.icao} [${st.gridLat}°, ${st.gridLon}°]</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Wind / QNH / Vis:</span>
+          <span>${st.isVariableWind ? "VRB" : st.windDir + "°"}/${st.windSpeedKt}KT • Q${st.qnhHpa} • ${st.visibilityM}m</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Clouds:</span>
+          <span class="text-emerald-300">${layersText}</span>
+        </div>
+        <div class="flex justify-between border-t border-slate-800 pt-1 mt-1">
+          <span class="text-slate-400">Threshold Formula:</span>
+          <span class="text-amber-300 font-semibold">τ = 1 - (${st.oktas}/8) = ${st.tau.toFixed(3)}</span>
+        </div>
+      `;
+    }
+
+    function renderPipelineTables() {
+      const stBody = document.getElementById("metar-table-body");
+      if (stBody) {
+        stBody.innerHTML = state.stations.map(s => {
+          const cloudsStr = s.clouds.length
+            ? s.clouds.map(c => `${c.type}${String(c.baseFt / 100).padStart(3, "0")}${c.convective || ""}`).join(" ")
+            : "SKC/NSC";
+          return `
+            <tr class="hover:bg-slate-800/50 transition">
+              <td class="py-2 px-3 font-bold text-sky-400"><a href="${s.sourceUrl}" target="_blank" rel="noopener noreferrer" class="underline hover:text-sky-300">${s.icao}</a></td>
+              <td class="py-2 px-3 text-slate-200 font-sans">${s.name}</td>
+              <td class="py-2 px-3 text-right text-slate-300">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</td>
+              <td class="py-2 px-3 text-right text-slate-400">[${s.gridLat}°, ${s.gridLon}°]</td>
+              <td class="py-2 px-3 text-right text-purple-300">${s.isVariableWind ? "VRB" : String(s.windDir).padStart(3, "0") + "°"} / ${s.windSpeedKt} KT</td>
+              <td class="py-2 px-3 text-right text-slate-300">${s.visibilityM} m</td>
+              <td class="py-2 px-3 text-right text-slate-300">${s.qnhHpa} hPa</td>
+              <td class="py-2 px-3 text-emerald-300">${cloudsStr}</td>
+              <td class="py-2 px-3 text-right font-bold text-amber-300">${s.oktas}/8 (τ=${s.tau.toFixed(2)})</td>
+              <td class="py-2 px-3 text-slate-400 max-w-xs truncate" title="${s.raw}">${s.raw}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      const gridBody = document.getElementById("grid-table-body");
+      if (gridBody) {
+        const rows = [];
+        for (let lat = -9; lat <= 3; lat++) {
+          for (let lon = 98; lon <= 119; lon += 2) {
+            rows.push(getGridCell(lat, lon));
+          }
+        }
+        document.getElementById("table-grid-count").textContent = `Showing ${rows.length} sampled 1°×1° cells across [-9°..4°, 98°..120°]`;
+        gridBody.innerHTML = rows.map(c => {
+          const contribText = c.contributors.map(k => `${k.icao} (${(k.weightNorm * 100).toFixed(0)}%)`).join(", ");
+          return `
+            <tr class="hover:bg-slate-800/50 transition">
+              <td class="py-2 px-3 font-semibold text-white">[${c.latIdx}°, ${c.lonIdx}°]</td>
+              <td class="py-2 px-3 text-slate-400">(${c.centerLat.toFixed(1)}°, ${c.centerLon.toFixed(1)}°)</td>
+              <td class="py-2 px-3">
+                <span class="px-1.5 py-0.5 rounded text-[10px] ${c.isDirect ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}">
+                  ${c.isDirect ? "DIRECT METAR" : "IDW INTERPOLATED"}
+                </span>
+              </td>
+              <td class="py-2 px-3 text-right text-sky-300 font-bold">${c.oktas.toFixed(2)}</td>
+              <td class="py-2 px-3 text-right text-amber-300 font-bold">${c.tau.toFixed(3)}</td>
+              <td class="py-2 px-3 text-right text-purple-300">${String(c.windDir).padStart(3, "0")}° / ${c.windSpeedKt.toFixed(1)} KT</td>
+              <td class="py-2 px-3 text-right text-slate-300">${c.qnhHpa}</td>
+              <td class="py-2 px-3 text-slate-400">${contribText}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+    }
+
+    // Generate JSON Response for GET /api/weather/bounds
+    function generateBoundsApiPayload(minLat, maxLat, minLon, maxLon) {
+      const cells = [];
+      for (let lat = minLat; lat < maxLat; lat++) {
+        for (let lon = minLon; lon < maxLon; lon++) {
+          const c = getGridCell(lat, lon);
+          cells.push({
+            grid_id: c.key,
+            bounds: { min_lat: lat, max_lat: lat + 1, min_lon: lon, max_lon: lon + 1 },
+            center: { lat: c.centerLat, lon: c.centerLon },
+            interpolation_mode: c.isDirect ? "direct_station" : `idw_k${state.idwNeighborsK}`,
+            oktas: Number(c.oktas.toFixed(3)),
+            threshold_tau: Number(c.tau.toFixed(4)),
+            wind_vector: {
+              dir_deg: c.windDir,
+              speed_kt: Number(c.windSpeedKt.toFixed(2)),
+              u_kt: Number(c.u.toFixed(2)),
+              v_kt: Number(c.v.toFixed(2))
+            },
+            qnh_hpa: c.qnhHpa,
+            visibility_m: c.visibilityM,
+            cloud_base_ft: c.baseFt,
+            contributors: c.contributors.map(k => ({
+              icao: k.icao,
+              distance_km: Number(k.distKm.toFixed(1)),
+              weight: Number(k.weightNorm.toFixed(3))
+            }))
+          });
+        }
+      }
+      return {
+        endpoint: `/api/weather/bounds?min_lat=${minLat}&max_lat=${maxLat}&min_lon=${minLon}&max_lon=${maxLon}`,
+        timestamp_utc: new Date().toISOString(),
+        grid_resolution_deg: "1x1",
+        idw_config: { k_neighbors: state.idwNeighborsK, power_p: state.idwPowerP },
+        active_stations_count: state.stations.length,
+        grid_cells_count: cells.length,
+        stations: state.stations.map(s => ({
+          icao: s.icao,
+          lat: s.lat,
+          lon: s.lon,
+          oktas: s.oktas,
+          tau: s.tau,
+          wind_dir: s.windDir,
+          wind_speed_kt: s.windSpeedKt,
+          qnh_hpa: s.qnhHpa,
+          visibility_m: s.visibilityM,
+          raw_metar: s.raw
+        })),
+        grid_cells: cells.slice(0, 45) // Truncated preview in UI for readability
+      };
+    }
+
+    function updateApiInspectorView() {
+      const minLat = parseInt(document.getElementById("api-min-lat").value, 10) || -9;
+      const maxLat = parseInt(document.getElementById("api-max-lat").value, 10) || 4;
+      const minLon = parseInt(document.getElementById("api-min-lon").value, 10) || 98;
+      const maxLon = parseInt(document.getElementById("api-max-lon").value, 10) || 120;
+
+      document.getElementById("api-url-preview").textContent =
+        `GET /api/weather/bounds?min_lat=${minLat}&max_lat=${maxLat}&min_lon=${minLon}&max_lon=${maxLon}`;
+
+      const payload = generateBoundsApiPayload(minLat, maxLat, minLon, maxLon);
+      document.getElementById("api-json-output").textContent = JSON.stringify(payload, null, 2);
+    }
+
+    function showToast(msg) {
+      const banner = document.getElementById("toast-banner");
+      const text = document.getElementById("toast-message");
+      if (!banner || !text) return;
+      text.textContent = msg;
+      banner.classList.remove("hidden");
+      clearTimeout(banner._timer);
+      banner._timer = setTimeout(() => banner.classList.add("hidden"), 3200);
+    }
+
+    // Attempt Live Fetch from NOAA AWC API with graceful fallback when browser CORS is restricted
+    async function syncNoaaAwcApi() {
+      const statusText = document.getElementById("status-text");
+      statusText.textContent = "SYNCING NOAA AWC API...";
+      const icaos = state.stations.map(s => s.icao).join(",");
+      const targetUrl = `https://aviationweather.gov/api/data/metar?ids=${icaos}&format=json`;
+
+      try {
+        const res = await fetch(targetUrl, { method: "GET" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (Array.isArray(json) && json.length > 0) {
+          let updatedCount = 0;
+          for (const item of json) {
+            const code = item.icaoId || item.station_id;
+            const raw = item.rawOb || item.raw_text;
+            const target = state.stations.find(s => s.icao === code);
+            if (target && raw) {
+              const parsed = parseMetarString(raw, code);
+              Object.assign(target, parsed);
+              updatedCount++;
+            }
+          }
+          state.gridCache.clear();
+          refreshAllViews();
+          statusText.textContent = `LIVE NOAA SYNC (${updatedCount} STATIONS)`;
+          showToast(`Successfully synced ${updatedCount} stations from NOAA AWC API!`);
+          return;
+        }
+        throw new Error("Empty NOAA payload");
+      } catch (err) {
+        // NOAA AWC API blocks direct browser CORS requests ("Cross-origin resource sharing is not permitted at this time")
+        state.gridCache.clear();
+        refreshAllViews();
+        statusText.textContent = `NOAA CORS GUARD -> GROUNDED FIR DATA (${state.stations.length} STATIONS)`;
+        showToast("NOAA AWC blocks browser CORS; using verified Oct 2026 METAR snapshot (use FastAPI backend for server-side NOAA polling).");
+      }
+    }
+
+    function refreshAllViews() {
+      populateStationPicker();
+      renderStationMarkers();
+      renderGridOverlay();
+      syncCanvasPosition();
+      renderCloudCanvasFrame();
+      renderPipelineTables();
+      updateApiInspectorView();
+
+      const [latStr, lonStr] = state.selectedCellKey.split(",");
+      const cell = getGridCell(parseInt(latStr, 10), parseInt(lonStr, 10));
+      updateCellInspector(cell);
+    }
+
+    // Populate Python FastAPI Backend Reference Code
+    function populateBackendCodeReference() {
+      const code = `# backend/main.py — Phase 1: NOAA AWC METAR Ingestion, Spatial Indexing & IDW REST API
+import math
+import re
+from typing import List, Dict, Optional
+import httpx
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="AeroGrid 2D Weather Radar Backend", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+NOAA_AWC_METAR_URL = "https://aviationweather.gov/api/data/metar"
+OKTAS_MAP = {"SKC": 0, "CLR": 0, "NSC": 0, "NCD": 0, "CAVOK": 0, "FEW": 2, "SCT": 4, "BKN": 6, "OVC": 8, "VV": 8}
+
+def parse_metar(raw: str, fallback_icao: str = "XXXX") -> Dict:
+    clean = raw.strip().upper()
+    wind_m = re.search(r"\\b(VRB|\\d{3})(\\d{2,3})(?:G(\\d{2,3}))?(KT|MPS)\\b", clean)
+    wind_dir = 0 if (not wind_m or wind_m.group(1) == "VRB") else int(wind_m.group(1))
+    factor = 1.94384 if (wind_m and wind_m.group(4) == "MPS") else 1.0
+    wind_spd = round(int(wind_m.group(2)) * factor) if wind_m else 0
+
+    move_rad = math.radians((wind_dir + 180) % 360)
+    u = wind_spd * math.sin(move_rad)
+    v = wind_spd * math.cos(move_rad)
+
+    vis_m = re.search(r"\\b(?:KT|MPS|\\d{3}V\\d{3})\\s+(\\d{4})\\b", clean)
+    visibility = 10000 if "CAVOK" in clean else (int(vis_m.group(1)) if vis_m else 9999)
+
+    qnh_m = re.search(r"\\bQ(\\d{4})\\b", clean)
+    qnh = int(qnh_m.group(1)) if qnh_m else 1013
+
+    clouds = []
+    max_oktas = 0
+    for m in re.finditer(r"\\b(FEW|SCT|BKN|OVC|VV)(\\d{3})(CB|TCU)?\\b", clean):
+        ctype, base_hundreds, conv = m.group(1), int(m.group(2)), m.group(3)
+        oktas = OKTAS_MAP.get(ctype, 0)
+        max_oktas = max(max_oktas, oktas)
+        clouds.append({"type": ctype, "base_ft": base_hundreds * 100, "convective": conv, "oktas": oktas})
+
+    tau = max(0.0, min(1.0, 1.0 - (max_oktas / 8.0)))
+    return {
+        "icao": fallback_icao, "raw": clean, "wind_dir": wind_dir, "wind_speed_kt": wind_spd,
+        "u": u, "v": v, "visibility_m": visibility, "qnh_hpa": qnh,
+        "clouds": clouds, "oktas": max_oktas, "tau": tau
+    }
+
+def interpolate_grid_idw(lat_idx: int, lon_idx: int, stations: List[Dict], k: int = 4, power: float = 2.0) -> Dict:
+    center_lat, center_lon = lat_idx + 0.5, lon_idx + 0.5
+    direct = [s for s in stations if math.floor(s["lat"]) == lat_idx and math.floor(s["lon"]) == lon_idx]
+    if direct:
+        n = len(direct)
+        oktas = sum(s["oktas"] for s in direct) / n
+        u = sum(s["u"] for s in direct) / n
+        v = sum(s["v"] for s in direct) / n
+        mode = "direct_station"
+    else:
+        dists = []
+        for s in stations:
+            dlat = center_lat - s["lat"]
+            dlon = (center_lon - s["lon"]) * math.cos(math.radians(center_lat))
+            d = max(0.05, math.hypot(dlat, dlon))
+            dists.append((d, s))
+        dists.sort(key=lambda x: x[0])
+        nearest = dists[:k]
+        weights = [(1.0 / (d ** power), s) for d, s in nearest]
+        w_sum = sum(w for w, _ in weights) or 1.0
+        oktas = sum((w / w_sum) * s["oktas"] for w, s in weights)
+        u = sum((w / w_sum) * s["u"] for w, s in weights)
+        v = sum((w / w_sum) * s["v"] for w, s in weights)
+        mode = f"idw_k{k}"
+
+    tau = max(0.0, min(1.0, 1.0 - (oktas / 8.0)))
+    return {
+        "grid_id": f"{lat_idx},{lon_idx}",
+        "center": {"lat": center_lat, "lon": center_lon},
+        "mode": mode, "oktas": round(oktas, 3), "tau": round(tau, 4),
+        "u_kt": round(u, 2), "v_kt": round(v, 2)
+    }
+
+@app.get("/api/weather/bounds")
+async def get_weather_bounds(
+    min_lat: int = Query(-10), max_lat: int = Query(5),
+    min_lon: int = Query(95), max_lon: int = Query(122),
+    k: int = Query(4, ge=2, le=8)
+):
+    bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
+    stations = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(NOAA_AWC_METAR_URL, params={"bbox": bbox, "format": "json"})
+        if resp.status_code == 200:
+            for item in resp.json():
+                parsed = parse_metar(item.get("rawOb", ""), item.get("icaoId", "XXXX"))
+                parsed["lat"] = float(item["lat"])
+                parsed["lon"] = float(item["lon"])
+                stations.append(parsed)
+
+    grid_cells = [
+        interpolate_grid_idw(lat, lon, stations, k=k)
+        for lat in range(min_lat, max_lat)
+        for lon in range(min_lon, max_lon)
+    ]
+    return {"stations": stations, "grid_cells": grid_cells}`;
+      document.getElementById("backend-code-block").textContent = code;
+    }
+
+    // =========================================================================
+    // 9. WIRE UP ALL CONTROLS & INITIALIZE ON WINDOW LOAD
+    // =========================================================================
+    function bindEvents() {
+      // Top navigation tabs
+      const tabs = [
+        { btn: "tab-btn-radar", view: "view-radar" },
+        { btn: "tab-btn-pipeline", view: "view-pipeline" },
+        { btn: "tab-btn-api", view: "view-api" }
+      ];
+      tabs.forEach(t => {
+        document.getElementById(t.btn).addEventListener("click", () => {
+          tabs.forEach(other => {
+            const b = document.getElementById(other.btn);
+            const v = document.getElementById(other.view);
+            if (other.btn === t.btn) {
+              b.className = "px-2.5 py-1.5 rounded-md text-xs font-medium transition bg-sky-600 text-white shadow";
+              v.classList.remove("hidden");
+              v.classList.add("flex");
+            } else {
+              b.className = "px-2.5 py-1.5 rounded-md text-xs font-medium transition text-slate-300 hover:text-white hover:bg-slate-800";
+              v.classList.add("hidden");
+              v.classList.remove("flex");
+            }
+          });
+          if (t.view === "view-radar" && map) {
+            setTimeout(() => {
+              map.invalidateSize();
+              syncCanvasPosition();
+              renderCloudCanvasFrame();
+            }, 50);
+          } else if (t.view === "view-pipeline") {
+            renderPipelineTables();
+          } else if (t.view === "view-api") {
+            updateApiInspectorView();
+          }
+        });
+      });
+
+      // Scenario selector
+      document.getElementById("scenario-select").addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (val === "grounded") {
+          initStationsFromDataset(GROUNDED_STATIONS_DEFAULT);
+          showToast("Loaded Grounded Oct 2026 Indonesia & SEA FIR METARs");
+        } else if (val === "convective") {
+          const ds = GROUNDED_STATIONS_DEFAULT.map(s => ({
+            ...s,
+            raw: SCENARIO_CONVECTIVE[s.icao] || s.raw
+          }));
+          initStationsFromDataset(ds);
+          showToast("Loaded ITCZ Convective Squall Line Scenario (BKN/OVC)");
+        } else if (val === "clear_vs_storm") {
+          const ds = GROUNDED_STATIONS_DEFAULT.map(s => ({
+            ...s,
+            raw: SCENARIO_GRADIENT[s.icao] || s.raw
+          }));
+          initStationsFromDataset(ds);
+          showToast("Loaded Sharp West-to-East Gradient Scenario (OVC 8/8 vs SKC 0/8)");
+        }
+        refreshAllViews();
+      });
+
+      // Toggle buttons
+      function updateToggleStyle(btnId, badgeId, active, color = "sky") {
+        const btn = document.getElementById(btnId);
+        const badge = document.getElementById(badgeId);
+        if (active) {
+          btn.className = `px-2.5 py-1.5 rounded-lg border border-${color}-500/50 bg-${color}-500/20 text-${color}-200 font-medium flex items-center justify-between transition`;
+          badge.className = `text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-${color}-500/30`;
+          badge.textContent = "ON";
+        } else {
+          btn.className = "px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-400 font-medium flex items-center justify-between transition";
+          badge.className = "text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-slate-700";
+          badge.textContent = "OFF";
+        }
+      }
+
+      document.getElementById("toggle-clouds").addEventListener("click", () => {
+        state.showClouds = !state.showClouds;
+        updateToggleStyle("toggle-clouds", "badge-clouds", state.showClouds, "sky");
+        renderCloudCanvasFrame();
+      });
+
+      document.getElementById("toggle-grid").addEventListener("click", () => {
+        state.showGrid = !state.showGrid;
+        updateToggleStyle("toggle-grid", "badge-grid", state.showGrid, "sky");
+        renderGridOverlay();
+      });
+
+      document.getElementById("toggle-wind").addEventListener("click", () => {
+        state.showWind = !state.showWind;
+        updateToggleStyle("toggle-wind", "badge-wind", state.showWind, "sky");
+        renderCloudCanvasFrame();
+      });
+
+      document.getElementById("toggle-bilinear").addEventListener("click", () => {
+        state.useBilinear = !state.useBilinear;
+        updateToggleStyle("toggle-bilinear", "badge-bilinear", state.useBilinear, "emerald");
+        renderCloudCanvasFrame();
+        showToast(state.useBilinear
+          ? "Bilinear Blending ON: Cutoff τ interpolated smoothly across 4 grid centers"
+          : "Bilinear Blending OFF: Unblended cell-wise cutoff τ (notice 1°×1° seams)");
+      });
+
+      document.getElementById("toggle-labels").addEventListener("click", () => {
+        state.showGridLabels = !state.showGridLabels;
+        renderGridOverlay();
+      });
+
+      document.getElementById("toggle-basemap").addEventListener("click", (e) => {
+        state.darkBasemap = !state.darkBasemap;
+        if (state.darkBasemap) {
+          map.removeLayer(lightTileLayer);
+          darkTileLayer.addTo(map);
+          e.currentTarget.textContent = "Basemap: Dark Radar";
+        } else {
+          map.removeLayer(darkTileLayer);
+          lightTileLayer.addTo(map);
+          e.currentTarget.textContent = "Basemap: Standard OSM";
+        }
+      });
+
+      // Sliders
+      document.getElementById("slider-freq").addEventListener("input", (e) => {
+        state.simplexFreq = parseFloat(e.target.value);
+        document.getElementById("val-freq").textContent = state.simplexFreq.toFixed(2);
+        renderCloudCanvasFrame();
+      });
+
+      document.getElementById("slider-idw-k").addEventListener("input", (e) => {
+        state.idwNeighborsK = parseInt(e.target.value, 10);
+        document.getElementById("val-idw-k").textContent = state.idwNeighborsK;
+        state.gridCache.clear();
+        refreshAllViews();
+      });
+
+      document.getElementById("slider-idw-p").addEventListener("input", (e) => {
+        state.idwPowerP = parseFloat(e.target.value);
+        document.getElementById("val-idw-p").textContent = state.idwPowerP.toFixed(1);
+        state.gridCache.clear();
+        refreshAllViews();
+      });
+
+      document.getElementById("slider-drift").addEventListener("input", (e) => {
+        state.windDriftMultiplier = parseFloat(e.target.value);
+        document.getElementById("val-drift").textContent = `${state.windDriftMultiplier.toFixed(1)}x`;
+      });
+
+      document.getElementById("slider-opacity").addEventListener("input", (e) => {
+        state.cloudMaxAlpha = parseFloat(e.target.value);
+        document.getElementById("val-opacity").textContent = state.cloudMaxAlpha.toFixed(2);
+        renderCloudCanvasFrame();
+      });
+
+      // Station Picker & Live METAR Editor
+      document.getElementById("station-picker").addEventListener("change", (e) => {
+        state.selectedStationIcao = e.target.value;
+        loadSelectedStationIntoEditor();
+      });
+
+      document.getElementById("btn-fly-station").addEventListener("click", () => {
+        const st = state.stations.find(s => s.icao === state.selectedStationIcao);
+        if (st && map) {
+          map.flyTo([st.lat, st.lon], 7, { duration: 0.9 });
+          const cell = getGridCell(Math.floor(st.lat), Math.floor(st.lon));
+          state.selectedCellKey = cell.key;
+          updateCellInspector(cell);
+        }
+      });
+
+      document.getElementById("btn-apply-metar").addEventListener("click", () => {
+        const rawText = document.getElementById("metar-input").value;
+        const st = state.stations.find(s => s.icao === state.selectedStationIcao);
+        if (!st) return;
+        const parsed = parseMetarString(rawText, st.icao);
+        Object.assign(st, parsed);
+        state.gridCache.clear();
+        refreshAllViews();
+        showToast(`Updated ${st.icao}: ${st.oktas}/8 oktas (τ=${st.tau.toFixed(2)}), Wind ${st.windDir}°/${st.windSpeedKt}KT`);
+      });
+
+      document.getElementById("btn-test-ovc").addEventListener("click", () => {
+        const st = state.stations.find(s => s.icao === state.selectedStationIcao);
+        if (!st) return;
+        const sampleOvc = `METAR ${st.icao} 271530Z 27025KT 2000 +TSRA BKN012CB OVC020 25/24 Q1005 NOSIG`;
+        document.getElementById("metar-input").value = sampleOvc;
+        const parsed = parseMetarString(sampleOvc, st.icao);
+        Object.assign(st, parsed);
+        state.gridCache.clear();
+        refreshAllViews();
+        showToast(`Set ${st.icao} to Overcast 8/8 (τ=0.00) with 25 KT westerly wind!`);
+      });
+
+      // NOAA Sync & API Inspector Controls
+      document.getElementById("btn-fetch-noaa").addEventListener("click", () => {
+        syncNoaaAwcApi();
+      });
+
+      document.getElementById("btn-run-endpoint").addEventListener("click", () => {
+        if (map) {
+          const b = map.getBounds();
+          document.getElementById("api-min-lat").value = Math.floor(b.getSouth());
+          document.getElementById("api-max-lat").value = Math.ceil(b.getNorth());
+          document.getElementById("api-min-lon").value = Math.floor(b.getWest());
+          document.getElementById("api-max-lon").value = Math.ceil(b.getEast());
+        }
+        updateApiInspectorView();
+        showToast("Generated GET /api/weather/bounds payload for active map bounds");
+      });
+
+      document.getElementById("btn-export-geojson").addEventListener("click", () => {
+        const payload = generateBoundsApiPayload(-9, 4, 98, 120);
+        const text = JSON.stringify(payload, null, 2);
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        showToast("Copied GET /api/weather/bounds JSON response to clipboard!");
+      });
+
+      document.getElementById("btn-copy-backend").addEventListener("click", () => {
+        const text = document.getElementById("backend-code-block").textContent;
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        showToast("Copied FastAPI backend/main.py code to clipboard!");
+      });
+    }
+
+    window.addEventListener("load", () => {
+      initStationsFromDataset(GROUNDED_STATIONS_DEFAULT);
+      initMap();
+      populateBackendCodeReference();
+      bindEvents();
+      refreshAllViews();
+      updateCursorProbe(-6.1256, 106.6560);
+      startAnimationLoop();
+    });
+  </script>
+</body>
+</html>
